@@ -36,7 +36,7 @@
 
 #include <dpdk/device/dpdk_priv.h>
 
-dpdk_main_t dpdk_main;
+__clib_export dpdk_main_t dpdk_main;
 dpdk_config_main_t dpdk_config_main;
 
 #define LINK_STATE_ELOGS	0

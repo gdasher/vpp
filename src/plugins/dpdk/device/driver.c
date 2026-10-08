@@ -21,6 +21,17 @@
 
 static dpdk_driver_t dpdk_drivers[] = {
   {
+    .drivers = DPDK_DRIVERS ({ "net_cndm", "Corundum cndm (natgw)" }),
+    .interface_name_prefix = "CndmEthernet",
+    /* every port of the card shares one PCI function */
+    .interface_number_from_port_id = 1,
+  },
+  {
+    .drivers = DPDK_DRIVERS ({ "net_natgw_model", "natgw shim model" }),
+    .interface_name_prefix = "NatgwModel",
+    .interface_number_from_port_id = 1,
+  },
+  {
     .drivers = DPDK_DRIVERS (
       { "net_ice", "Intel E810 Family" }, { "net_igc", "Intel I225 2.5G Family" },
       { "net_e1000_igb", "Intel e1000" }, { "net_e1000_em", "Intel 82540EM (e1000)" }),

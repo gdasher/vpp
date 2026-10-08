@@ -30,6 +30,11 @@
 #include <bus_vmbus_driver.h>
 #endif /* __linux__ */
 
+/* DPDK < 26.07 compatibility */
+#ifndef RTE_BUS_DEVICE
+#define RTE_BUS_DEVICE(dev, type) container_of (dev, type, device)
+#endif
+
 #include <vnet/devices/devices.h>
 
 #if CLIB_DEBUG > 0
