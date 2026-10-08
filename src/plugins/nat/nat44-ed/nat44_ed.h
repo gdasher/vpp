@@ -158,6 +158,8 @@ format_function_t format_nat44_ed_tcp_state;
 #define SNAT_SESSION_FLAG_AFFINITY	     (1 << 6)
 #define SNAT_SESSION_FLAG_EXACT_ADDRESS	     (1 << 7)
 #define SNAT_SESSION_FLAG_HAIRPINNING	     (1 << 8)
+/* reserved for the session event callback (offload bookkeeping) */
+#define SNAT_SESSION_FLAG_OFFLOAD	     (1 << 9)
 
 /* NAT interface flags */
 #define NAT_INTERFACE_FLAG_IS_INSIDE 1
@@ -464,6 +466,23 @@ typedef struct
 
 struct snat_main_s;
 
+/* Session events for offload (natgw). Callbacks run on the thread that owns
+ * the session (or on the main thread holding the worker barrier), in the
+ * datapath; they must be short and may modify only SNAT_SESSION_FLAG_OFFLOAD
+ * in the session flags. */
+typedef enum
+{
+  NAT44_ED_SES_EV_ESTABLISHED, /* TCP handshake complete (or reopened) */
+  NAT44_ED_SES_EV_ACTIVE,      /* packet count reached ses_active_pkts */
+  NAT44_ED_SES_EV_CLOSING,     /* TCP FIN or RST seen */
+  NAT44_ED_SES_EV_DELETE,      /* session about to be freed */
+  NAT44_ED_SES_EV_CLEAR,	     /* every session freed (s is NULL) */
+} nat44_ed_ses_event_t;
+
+typedef void (nat44_ed_ses_event_cb_t) (u32 thread_index,
+					snat_session_t *s,
+					nat44_ed_ses_event_t ev);
+
 u32 nat44_ed_get_in2out_worker_index (vlib_buffer_t *b, ip4_header_t *ip,
 				      u32 rx_fib_index, u8 is_output);
 u32 nat44_ed_get_out2in_worker_index (vlib_buffer_t *b, ip4_header_t *ip,
@@ -626,6 +645,10 @@ typedef struct snat_main_s
 
   /* nat44 plugin enabled */
   u8 enabled;
+
+  /* session event callback (offload), and the ACTIVE packet threshold */
+  nat44_ed_ses_event_cb_t *ses_event_cb;
+  u32 ses_active_pkts;
 
   /* TCP session state machine table:
    *   first dimension is possible states
@@ -879,6 +902,36 @@ int nat44_ed_del_session (snat_main_t *sm, ip4_address_t *addr, u16 port,
 
 void nat44_ed_free_session_data (snat_main_t *sm, snat_session_t *s,
 				 u32 thread_index, u8 is_ha);
+
+/**
+ * @brief Register the session event callback (one at a time; NULL removes it)
+ *
+ * @param cb          callback, run on the owning thread
+ * @param active_pkts packet count that raises NAT44_ED_SES_EV_ACTIVE, 0: never
+ * @return 0, or VNET_API_ERROR_VALUE_EXIST when another callback is registered
+ */
+int nat44_ed_register_session_event_cb (nat44_ed_ses_event_cb_t *cb,
+					u32 active_pkts);
+
+/**
+ * @brief Fold traffic seen elsewhere (offload) into a session: last heard
+ * time, packet and byte counts, LRU position. Caller must own the session's
+ * thread or hold the worker barrier.
+ */
+void nat44_ed_session_refresh (u32 thread_index, snat_session_t *s,
+			       f64 last_heard, u64 pkts, u64 bytes);
+
+/**
+ * @brief Delete a session by index. Caller must own the session's thread or
+ * hold the worker barrier.
+ * @return 0, or VNET_API_ERROR_NO_SUCH_ENTRY
+ */
+int nat44_ed_del_session_by_index (u32 thread_index, u32 session_index);
+
+/**
+ * @brief Seconds of inactivity after which the session expires
+ */
+u32 nat44_ed_session_timeout (snat_session_t *s);
 
 /**
  * @brief Set NAT44 session limit (session limit, vrf id)

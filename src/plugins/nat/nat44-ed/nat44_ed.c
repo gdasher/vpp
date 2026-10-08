@@ -28,7 +28,7 @@
 
 #include <vlib/stats/stats.h>
 
-snat_main_t snat_main;
+__clib_export snat_main_t snat_main;
 
 static_always_inline void nat_validate_interface_counters (snat_main_t *sm,
 							   u32 sw_if_index);
@@ -197,6 +197,9 @@ void
 nat44_ed_free_session_data (snat_main_t *sm, snat_session_t *s,
 			    u32 thread_index, u8 is_ha)
 {
+  if (PREDICT_FALSE (sm->ses_event_cb != 0))
+    sm->ses_event_cb (thread_index, s, NAT44_ED_SES_EV_DELETE);
+
   per_vrf_sessions_unregister_session (s, thread_index);
 
   if (nat_ed_ses_i2o_flow_hash_add_del (sm, thread_index, s, 0))
@@ -3348,12 +3351,67 @@ nat44_ed_db_free ()
   snat_main_t *sm = &snat_main;
   snat_main_per_thread_data_t *tsm;
 
+  if (sm->ses_event_cb)
+    sm->ses_event_cb (~0, 0, NAT44_ED_SES_EV_CLEAR);
+
   vec_foreach (tsm, sm->per_thread_data)
     {
       nat44_ed_worker_db_free (tsm);
     }
 
   nat44_ed_flow_hash_free ();
+}
+
+__clib_export int
+nat44_ed_register_session_event_cb (nat44_ed_ses_event_cb_t *cb,
+				    u32 active_pkts)
+{
+  snat_main_t *sm = &snat_main;
+
+  if (cb && sm->ses_event_cb && sm->ses_event_cb != cb)
+    return VNET_API_ERROR_VALUE_EXIST;
+  sm->ses_active_pkts = cb ? active_pkts : 0;
+  sm->ses_event_cb = cb;
+  return 0;
+}
+
+__clib_export void
+nat44_ed_session_refresh (u32 thread_index, snat_session_t *s, f64 last_heard,
+			  u64 pkts, u64 bytes)
+{
+  snat_main_t *sm = &snat_main;
+
+  s->total_pkts += pkts;
+  s->total_bytes += bytes;
+  if (last_heard > s->last_heard)
+    {
+      s->last_heard = last_heard;
+      nat44_session_update_lru (sm, s, thread_index);
+    }
+}
+
+__clib_export int
+nat44_ed_del_session_by_index (u32 thread_index, u32 session_index)
+{
+  snat_main_t *sm = &snat_main;
+  snat_main_per_thread_data_t *tsm;
+  snat_session_t *s;
+
+  if (!sm->enabled || thread_index >= vec_len (sm->per_thread_data))
+    return VNET_API_ERROR_NO_SUCH_ENTRY;
+  tsm = vec_elt_at_index (sm->per_thread_data, thread_index);
+  if (pool_is_free_index (tsm->sessions, session_index))
+    return VNET_API_ERROR_NO_SUCH_ENTRY;
+  s = pool_elt_at_index (tsm->sessions, session_index);
+  nat44_ed_free_session_data (sm, s, thread_index, 0);
+  nat_ed_session_delete (sm, s, thread_index, 1);
+  return 0;
+}
+
+__clib_export u32
+nat44_ed_session_timeout (snat_session_t *s)
+{
+  return nat44_session_get_timeout (&snat_main, s);
 }
 
 void

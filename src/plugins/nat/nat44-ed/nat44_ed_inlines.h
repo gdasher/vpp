@@ -782,6 +782,11 @@ nat44_set_tcp_session_state (snat_main_t *sm, f64 now, snat_session_t *ses,
   ses->last_lru_update = now;
   clib_dlist_remove (tsm->lru_pool, ses->lru_index);
   clib_dlist_addtail (tsm->lru_pool, ses->lru_head_index, ses->lru_index);
+  if (PREDICT_FALSE (sm->ses_event_cb != 0))
+    sm->ses_event_cb (thread_index, ses,
+		      ses->tcp_state == NAT44_ED_TCP_STATE_ESTABLISHED ?
+			NAT44_ED_SES_EV_ESTABLISHED :
+			NAT44_ED_SES_EV_CLOSING);
 }
 
 always_inline void
@@ -808,6 +813,9 @@ nat44_session_update_counters (snat_session_t *s, f64 now, uword bytes,
   s->last_heard = now;
   s->total_pkts++;
   s->total_bytes += bytes;
+  if (PREDICT_FALSE (snat_main.ses_event_cb != 0 &&
+		     s->total_pkts == snat_main.ses_active_pkts))
+    snat_main.ses_event_cb (thread_index, s, NAT44_ED_SES_EV_ACTIVE);
 }
 
 /** \brief Per-user LRU list maintenance */
